@@ -1,0 +1,1676 @@
+# GUIA COMPLETO DA BIBLIOTECA PPYMAVLINK
+
+## SUMÁRIO
+
+1. Visão Geral da Biblioteca
+2. Arquitetura e Módulos
+3. Instalação e Configuração
+4. Conexão Básica
+5. Leitura de Estado
+6. Comandos de Controle
+7. Navegação Guiada
+8. Missões Autônomas
+9. Gerenciamento de Parâmetros
+10. Failsafe e Segurança
+11. Health Monitor
+12. Rate Limiting
+13. Validação de Entrada
+14. Exemplos Completos
+15. Referência Rápida
+
+
+================================================================================
+                           VISÃO GERAL DA BIBLIOTECA
+================================================================================
+
+A biblioteca ppymavlink é uma implementação completa para controle de drones e
+veículos autônomos utilizando o protocolo MAVLink. Ela oferece uma API de alto
+nível que abstrai toda a complexidade da comunicação serial/UDP, processamento
+de mensagens e gerenciamento de estado.
+
+Principais Características:
+
+- API intuitiva        - Comandos simples e diretos
+- Thread-safe          - Estado compartilhado seguro entre threads
+- Event-driven         - Sistema de eventos via dispatcher
+- Failsafe automático  - Reconexão e ações de emergência
+- Health monitoring    - Detecção proativa de problemas
+- Rate limiting        - Prevenção de saturação do link
+- Validação de entrada - Prevenção de comandos inválidos
+- Suporte a missões    - Upload/download/execução de missões
+- Navegação guiada     - GOTO, velocidade, yaw control
+- Logging estruturado  - Debug e monitoramento facilitados
+
+
+================================================================================
+                           ARQUITETURA E MÓDULOS
+================================================================================
+
+A biblioteca é organizada em módulos independentes que se integram através da
+classe principal Vehicle:
+
+┌─────────────────────────────────────────────────────────────┐
+│                       VEHICLE (API Principal)               │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │ Connection  │  │  Dispatcher │  │      Reader         │  │
+│  │ (MAVLink)   │  │  (Event Bus)│  │   (Loop de Leitura) │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+│                                                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │   State     │  │  Telemetry  │  │    Heartbeat        │  │
+│  │  (Storage)  │  │ (Parsing)   │  │    (Manager)        │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+│                                                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │  Commands   │  │ Transaction │  │    Parameters       │  │
+│  │ (Control)   │  │   (ACK)     │  │    (Manager)        │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+│                                                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │  Mission    │  │ Navigation  │  │     Failsafe        │  │
+│  │  (Manager)  │  │ (Controller)│  │     (Manager)       │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+│                                                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │   Health    │  │Rate Limiter │  │     Validators      │  │
+│  │  (Monitor)  │  │             │  │                     │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+
+Descrição dos Módulos:
+
+| Módulo          | Arquivo           | Função                                   |
+|-----------------|-------------------|------------------------------------------|
+| Vehicle         | vehicle.py        | Classe principal que integra os módulos  |
+| Connection      | connection.py     | Conexão MAVLink (UDP/Serial/TCP)         |
+| Dispatcher      | dispatcher.py     | Event bus para comunicação entre módulos |
+| Reader          | reader.py         | Thread de leitura contínua de mensagens  |
+| State           | state.py          | Armazenamento thread-safe do estado      |
+| Telemetry       | telemetry.py      | Parsing e conversão de mensagens MAVLink |
+| Heartbeat       | heartbeat.py      | Envio/monitoramento de heartbeats        |
+| Commands        | commands.py       | Comandos de controle (ARM, TAKEOFF, etc.)|
+| Transaction     | transaction.py    | Gerenciamento de ACKs e timeouts         |
+| Parameters      | parameters.py     | Leitura/escrita de parâmetros            |
+| Mission         | mission.py        | Gerenciamento de missões                 |
+| Navigation      | navigation.py     | Controle de navegação (GOTO, velocidade) |
+| Failsafe        | failsafe.py       | Monitoramento e recuperação de conexão   |
+| Health          | health.py         | Monitoramento de saúde do veículo        |
+| RateLimiter     | rate_limiter.py   | Limitação de taxa de mensagens           |
+| Validators      | validators.py     | Validação de coordenadas e parâmetros    |
+| Logging         | logging_config.py | Configuração centralizada de logs        |
+
+
+================================================================================
+                           INSTALAÇÃO E CONFIGURAÇÃO
+================================================================================
+
+Dependências:
+
+    pip install pymavlink
+
+Configuração de Logging (Opcional):
+
+    from logging_config import LoggerManager
+
+    # Configurar antes de criar o Vehicle
+    LoggerManager.setup(
+        level="INFO",              # DEBUG, INFO, WARNING, ERROR
+        log_file="drone.log",      # Arquivo de log (opcional)
+        use_colors=True            # Cores no console
+    )
+
+
+================================================================================
+                              CONEXÃO BÁSICA
+================================================================================
+
+Strings de Conexão:
+
+    from vehicle import Vehicle
+
+    # SITL (Simulador ArduPilot)
+    drone = Vehicle("udp:127.0.0.1:14550")
+
+    # USB/Serial (Linux)
+    drone = Vehicle("/dev/ttyACM0", baudrate=115200)
+
+    # USB/Serial (Windows)
+    drone = Vehicle("COM3", baudrate=57600)
+
+    # TCP
+    drone = Vehicle("tcp:192.168.1.100:5760")
+
+Conectar e Desconectar:
+
+    from vehicle import Vehicle
+
+    drone = Vehicle("udp:127.0.0.1:14550")
+    drone.connect()
+
+    # SEMPRE aguarde a telemetria!
+    if drone.wait_ready(timeout=10):
+        print("Veículo pronto para uso!")
+        print(f"Modo: {drone.state.flight_mode()}")
+        print(f"Armado: {drone.state.is_armed()}")
+
+    drone.disconnect()
+
+Context Manager (Recomendado):
+
+    with Vehicle("udp:127.0.0.1:14550") as drone:
+        drone.wait_ready()
+        print(f"Modo: {drone.state.flight_mode()}")
+    # Desconecta automaticamente ao sair
+
+Propriedades Úteis:
+
+    drone.is_connected          # bool - Conexão ativa?
+    drone.target_system         # int - ID do sistema alvo
+    drone.target_component      # int - ID do componente alvo
+    drone.connection_string     # str - String de conexão usada
+
+
+================================================================================
+                              LEITURA DE ESTADO
+================================================================================
+
+Estado do Veículo:
+
+    # Modo de voo
+    mode = drone.state.flight_mode()
+    # Retorna: "STABILIZE", "GUIDED", "AUTO", "LOITER", "LAND", "RTL", etc.
+
+    # Armado?
+    armed = drone.state.is_armed()  # True ou False
+
+    # GPS
+    gps = drone.state.gps
+    gps.fix_type               # 0=Sem GPS, 2=2D, 3=3D Fix, 4=DGPS, 6=RTK Fixed
+    gps.satellites_visible     # Número de satélites
+    drone.state.has_gps_fix()  # True se fix_type >= 3
+
+    # Posição
+    pos = drone.state.position
+    pos.latitude            # Graus (-35.363262)
+    pos.longitude           # Graus (149.165237)
+    pos.relative_altitude   # Metros (altura relativa ao home)
+    pos.absolute_altitude   # Metros (altura sobre o nível do mar)
+    pos.heading             # Graus (0-360)
+    pos.vx, pos.vy, pos.vz  # Velocidade em m/s
+
+    # Atitude
+    att = drone.state.attitude
+    att.roll    # Graus (-180 a 180)
+    att.pitch   # Graus (-90 a 90)
+    att.yaw     # Graus (0-360)
+
+    # Bateria
+    bat = drone.state.battery
+    bat.voltage     # Volts (12.6)
+    bat.current     # Amperes
+    bat.remaining   # Porcentagem (0-100)
+
+    # Sistema
+    sys = drone.state.system
+    sys.armed           # True/False
+    sys.flight_mode     # String do modo
+    sys.system_status   # 3=STANDBY, 4=ACTIVE, etc.
+
+Status Formatado:
+
+    # Imprimir no console
+    drone.print_status()
+
+    # Obter como dicionário
+    status = drone.get_status_dict()
+    print(status['mode'])
+    print(status['battery']['voltage'])
+    print(status['position']['altitude_rel'])
+    print(status['gps']['fix_type'])
+    print(status['link']['state'])
+    print(status['health']['active_issues'])
+
+Monitoramento Contínuo:
+
+    import time
+
+    while drone.is_connected:
+        pos = drone.state.position
+        bat = drone.state.battery
+        
+        print(f"\rAlt: {pos.relative_altitude:.1f}m | "
+              f"Bat: {bat.voltage:.1f}V | "
+              f"Modo: {drone.state.flight_mode()} | "
+              f"GPS: {drone.state.gps.fix_type}", end="")
+        time.sleep(1)
+
+Snapshot Thread-Safe:
+
+    # Obtém uma cópia completa do estado (thread-safe)
+    state_snapshot = drone.state.get_state()
+
+    # Acessar dados da snapshot
+    print(state_snapshot.system.flight_mode)
+    print(state_snapshot.position.latitude)
+    print(state_snapshot.battery.voltage)
+
+
+================================================================================
+                            COMANDOS DE CONTROLE
+================================================================================
+
+Mudança de Modo:
+
+    from commands import CommandResult
+
+    # Listar modos disponíveis
+    drone.commands.print_available_modes()
+
+    # Mudar modo
+    result = drone.set_mode("GUIDED", timeout=3.0)  # Navegação guiada com GPS
+    result = drone.set_mode("AUTO", timeout=3.0)    # Executar missão automática
+    result = drone.set_mode("RTL", timeout=3.0)     # Return to Launch
+    result = drone.set_mode("LAND", timeout=3.0)    # Pousar na posição atual
+    result = drone.set_mode("LOITER", timeout=3.0)  # Pairar mantendo posição
+    result = drone.set_mode("STABILIZE", timeout=3.0) # Modo estabilizado
+    result = drone.set_mode("ALT_HOLD", timeout=3.0)  # Manter altitude
+    result = drone.set_mode("POSHOLD", timeout=3.0)   # Manter posição
+
+    # Verificar modo atual
+    print(f"Modo atual: {drone.state.flight_mode()}")
+
+    # Atalhos
+    drone.commands.rtl()        # Ativa RTL
+    drone.commands.hold()       # Ativa LOITER (ou HOLD)
+    drone.commands.auto()       # Ativa AUTO
+    drone.commands.stabilize()  # Ativa STABILIZE
+
+ARM e DISARM:
+
+    # ARMAR
+    result = drone.arm(timeout=5.0)
+
+    if result == CommandResult.SUCCESS:
+        print("Armado com sucesso!")
+    elif result == CommandResult.TIMEOUT:
+        print("Timeout - drone não respondeu")
+    elif result == CommandResult.DENIED:
+        print("Negado - verifique:")
+        print("  - GPS fix adequado?")
+        print("  - Safety switch pressionado?")
+        print("  - Pre-arm checks passaram?")
+        print("  - Bateria OK?")
+    elif result == CommandResult.FAILED:
+        print("Falha geral")
+    elif result == CommandResult.DISCONNECTED:
+        print("Desconectado!")
+
+    # Verificar se armou
+    if drone.state.is_armed():
+        print("Drone está armado")
+
+    # DESARMAR
+    drone.disarm(timeout=5.0)
+
+    # Forçar desarme (CUIDADO! Pode desarmar em voo!)
+    drone.commands.force_disarm()
+
+Decolagem e Pouso:
+
+    # Decolagem (requer modo GUIDED e armado)
+    drone.set_mode("GUIDED")
+    drone.arm()
+    result = drone.takeoff(altitude=10.0, timeout=10.0)
+
+    if result == CommandResult.SUCCESS:
+        print("Decolagem iniciada!")
+        
+        # Aguardar atingir altitude
+        time.sleep(5)
+        print(f"Altitude: {drone.state.position.relative_altitude:.1f}m")
+    else:
+        print(f"Falha na decolagem: {result}")
+
+    # Pousar
+    drone.land()
+
+    # Aguardar pouso completo
+    while drone.state.is_armed():
+        time.sleep(1)
+    print("Pouso concluído!")
+
+    # Abortar pouso (se necessário)
+    drone.commands.abort_landing()
+
+Reboot:
+
+    # Reiniciar apenas o autopilot
+    result = drone.reboot(autopilot_only=True)
+
+    # Reiniciar sistema completo (CUIDADO!)
+    result = drone.reboot(autopilot_only=False)
+
+
+================================================================================
+                             NAVEGAÇÃO GUIADA
+================================================================================
+
+Preparação para Navegação:
+
+    from navigation import NavResult
+
+    # Sempre antes de navegar:
+    drone.set_mode("GUIDED")
+    drone.arm()
+
+    # Confirmar pré-condições
+    assert drone.state.flight_mode() == "GUIDED", "Modo GUIDED não ativado!"
+    assert drone.state.is_armed(), "Drone não está armado!"
+    assert drone.state.has_gps_fix(), "GPS fix necessário para navegação!"
+
+Decolagem Guiada:
+
+    # Decolagem simplificada em modo GUIDED
+    result = drone.takeoff_guided(altitude=10.0, timeout=15.0)
+
+    if result == NavResult.SUCCESS:
+        print(f"Decolado! Altitude: {drone.state.position.relative_altitude:.1f}m")
+    else:
+        print(f"Falha: {result}")
+
+Ir para Coordenada (GOTO):
+
+    # Vai para coordenada e aguarda chegada
+    result = drone.goto(
+        latitude=-35.363261,
+        longitude=149.165230,
+        altitude=30.0,           # Altitude alvo em metros
+        yaw=90,                  # Yaw alvo em graus (opcional)
+        ground_speed=5.0,        # Velocidade em m/s
+        acceptance_radius=2.0,   # Raio de aceitação em metros
+        timeout=30.0,            # Timeout em segundos
+        callback=None            # Callback quando chegar
+    )
+
+    if result == NavResult.SUCCESS:
+        print("Chegou ao destino!")
+    elif result == NavResult.TIMEOUT:
+        print("Timeout - não chegou a tempo")
+    elif result == NavResult.NOT_ARMED:
+        print("Drone não está armado!")
+    elif result == NavResult.REJECTED:
+        print("Modo não é GUIDED")
+
+Mover Relativo à Posição Atual:
+
+    # Mover 10m norte, 5m leste, manter altitude
+    result = drone.goto_relative(
+        north=10.0,    # Metros para norte (+)
+        east=5.0,      # Metros para leste (+)
+        up=0.0,        # Metros para cima (+), negativo para descer
+        yaw=None,      # Yaw opcional
+        timeout=30.0
+    )
+
+    # Mover 5m para trás (sul) e descer 2m
+    drone.goto_relative(north=-5.0, east=0, up=-2.0)
+
+    # Mover 3m para esquerda (oeste)
+    drone.goto_relative(north=0, east=-3.0, up=0)
+
+Controle por Velocidade:
+
+    # Velocidade por 3 segundos
+    drone.set_velocity(
+        vx=5.0,        # Velocidade norte (m/s, positivo=norte)
+        vy=0.0,        # Velocidade leste (m/s, positivo=leste)
+        vz=0.0,        # Velocidade vertical (m/s, positivo=descer)
+        yaw=None,      # Yaw opcional
+        duration=3.0   # Duração em segundos (None = contínuo)
+    )
+
+    # Velocidade contínua (até mandar parar)
+    drone.set_velocity(vx=2.0, vy=1.0, vz=0.0)  # Diagonal nordeste
+    time.sleep(5)
+    drone.stop_navigation()  # Para!
+
+    # Velocidade no referencial do corpo (body frame)
+    drone.set_velocity_body(
+        vx=3.0,   # Frente (m/s)
+        vy=0.0,   # Direita (m/s)
+        vz=0.0,   # Baixo (m/s)
+        duration=5.0
+    )
+
+Controle de Yaw (Orientação):
+
+    # Yaw absoluto (apontar para norte = 0°)
+    drone.set_yaw(0)       # Norte
+    drone.set_yaw(90)      # Leste
+    drone.set_yaw(180)     # Sul
+    drone.set_yaw(270)     # Oeste
+
+    # Yaw relativo (girar X graus)
+    drone.set_yaw(90, is_relative=True)    # Gira 90° horário
+    drone.set_yaw(-45, is_relative=True)   # Gira 45° anti-horário
+
+    # Direção específica
+    drone.set_yaw(180, direction=1)   # Força sentido horário
+    drone.set_yaw(180, direction=-1)  # Força sentido anti-horário
+
+    # Taxa de yaw (rotação contínua)
+    drone.set_yaw_rate(30, duration=3.0)   # 30°/s por 3 segundos
+    drone.set_yaw_rate(-15, duration=2.0)  # 15°/s anti-horário por 2s
+
+Controle de Altitude:
+
+    # Alterar altitude mantendo posição horizontal
+    drone.set_altitude(
+        altitude=50.0,       # Altitude alvo
+        ground_speed=2.0,    # Velocidade de subida/descida
+        timeout=30.0
+    )
+
+Parar Navegação:
+
+    # Para qualquer navegação ativa (pairar no local)
+    drone.stop_navigation()
+
+    # Ou usando loiter
+    drone.loiter()
+
+    # Verificar se está navegando
+    if drone.is_navigating():
+        print("Ainda navegando...")
+
+Pouso Guiado:
+
+    # Pousar em modo GUIDED
+    result = drone.land_guided(timeout=60.0)
+
+    # Aguardar pouso completo
+    while drone.state.is_armed():
+        time.sleep(1)
+    print("Pouso concluído!")
+
+Navegação com Múltiplos Waypoints:
+
+    # Definir waypoints para visitar
+    waypoints = [
+        (-35.363261, 149.165230, 20, 0),     # (lat, lon, alt, yaw)
+        (-35.363261, 149.166000, 25, 90),
+        (-35.363800, 149.166000, 25, 180),
+        (-35.363800, 149.165230, 20, 270),
+    ]
+
+    # Preparar
+    drone.set_mode("GUIDED")
+    drone.arm()
+    drone.takeoff_guided(15)
+
+    # Visitar cada waypoint
+    for lat, lon, alt, yaw in waypoints:
+        print(f"Indo para: {lat}, {lon}, {alt}m")
+        
+        result = drone.goto(lat, lon, alt, yaw=yaw, timeout=30.0)
+        
+        if result == NavResult.SUCCESS:
+            print("  -> Chegou!")
+        else:
+            print(f"  -> Falha: {result}")
+            break
+        
+        time.sleep(2)  # Pairar 2 segundos
+
+    # Retornar
+    drone.set_mode("RTL")
+    while drone.state.is_armed():
+        time.sleep(1)
+    print("Missão concluída!")
+
+
+================================================================================
+                             MISSÕES AUTÔNOMAS
+================================================================================
+
+Construir Missão Passo a Passo:
+
+    from mission import MissionResult
+
+    # Limpar missão local
+    drone.clear_local_mission()
+
+    # Adicionar itens na ordem
+    drone.add_takeoff(altitude=10.0)                              # Item 0
+    drone.add_waypoint(-35.363261, 149.165230, 30.0)              # Item 1
+    drone.add_waypoint(-35.363261, 149.166000, 30.0)              # Item 2
+    drone.add_waypoint(-35.363800, 149.166000, 30.0)              # Item 3
+    drone.add_loiter(time_seconds=5.0, radius=10.0)               # Item 4
+    drone.add_rtl()                                               # Item 5
+
+    # Ver missão criada
+    print(f"Missão com {drone.mission_count()} itens:")
+    for item in drone.get_mission():
+        print(f"Item {item.seq}: {item}")
+
+    # Enviar para o drone
+    result = drone.upload_mission(timeout=30.0)
+
+    if result == MissionResult.SUCCESS:
+        print("Missão enviada com sucesso!")
+    else:
+        print(f"Falha no upload: {result}")
+
+Upload Rápido de Coordenadas:
+
+    waypoints = [
+        (-35.363261, 149.165230, 30.0),  # (lat, lon, altitude)
+        (-35.363261, 149.166000, 30.0),
+        (-35.363800, 149.166000, 30.0),
+        (-35.363800, 149.165230, 30.0),
+    ]
+
+    result = drone.upload_waypoints(
+        waypoints=waypoints,
+        takeoff_alt=10.0,       # Altitude de decolagem
+        include_takeoff=True,   # Adiciona decolagem automática
+        include_land=True       # Adiciona pouso automático
+    )
+
+Criar Itens Manualmente:
+
+    from mission import MissionItem
+
+    items = []
+
+    # Decolagem
+    items.append(MissionItem.takeoff(seq=0, altitude=10.0))
+
+    # Waypoints
+    items.append(MissionItem.waypoint(seq=1, lat=-35.363, lon=149.165, alt=30))
+    items.append(MissionItem.waypoint(seq=2, lat=-35.364, lon=149.166, alt=30))
+
+    # Loiter (pairar por tempo)
+    items.append(MissionItem.loiter(seq=3, time_seconds=10, radius=15))
+
+    # Loiter ilimitado (pairar até novo comando)
+    items.append(MissionItem.loiter_unlimited(seq=4, radius=10))
+
+    # Return to Launch
+    items.append(MissionItem.rtl(seq=5))
+
+    # Pouso
+    items.append(MissionItem.land(seq=6))
+
+    # Delay
+    items.append(MissionItem.do_delay(seq=7, seconds=5.0))
+
+    # Servo
+    items.append(MissionItem.do_set_servo(seq=8, servo_num=1, pwm=1500))
+
+    # Upload
+    drone.upload_mission(items)
+
+Baixar Missão Existente:
+
+    result, items = drone.download_mission(timeout=15.0)
+
+    if result == MissionResult.SUCCESS:
+        print(f"Missão com {len(items)} itens:")
+        for item in items:
+            print(f"  Seq {item.seq}: {item}")
+    elif result == MissionResult.NO_MISSION:
+        print("Nenhuma missão no drone")
+    else:
+        print(f"Erro: {result}")
+
+Limpar Missão:
+
+    result = drone.clear_mission(timeout=10.0)
+    if result == MissionResult.SUCCESS:
+        print("Missão limpa!")
+
+Executar Missão:
+
+    # Enviar missão primeiro
+    drone.upload_mission()
+
+    # Mudar para AUTO
+    drone.set_mode("AUTO")
+    time.sleep(0.5)
+
+    # Armar (inicia a missão automaticamente!)
+    result = drone.arm()
+    if result == CommandResult.SUCCESS:
+        print("Missão iniciada!")
+    else:
+        print(f"Falha ao armar: {result}")
+
+    # Monitorar durante a missão
+    while drone.state.is_armed():
+        pos = drone.state.position
+        print(f"\rAlt: {pos.relative_altitude:.1f}m | "
+              f"Modo: {drone.state.flight_mode()}", end="")
+        time.sleep(1)
+
+    print("\nMissão concluída!")
+
+Exportar Missão:
+
+    # Exportar para arquivo (formato QGC WPL)
+    drone.export_mission("minha_missao.waypoints")
+
+    # A missão pode ser carregada no Mission Planner ou QGroundControl
+
+Manipulação de Itens:
+
+    # Adicionar item específico
+    item = MissionItem.waypoint(seq=0, lat=-35.363, lon=149.165, alt=30)
+    drone.mission.add_item(item)
+
+    # Remover item por sequência
+    drone.mission.remove_item(seq=2)
+
+    # Inserir item em posição específica
+    drone.mission.insert_item(seq=1, item=novo_item)
+
+    # Obter item por sequência
+    item = drone.get_mission_item(seq=0)
+
+    # Definir missão completa
+    drone.mission.set_mission(lista_de_itens)
+
+
+================================================================================
+                         GERENCIAMENTO DE PARÂMETROS
+================================================================================
+
+Download de Todos os Parâmetros:
+
+    from parameters import ParamResult
+
+    def progress_callback(current, total, name):
+        print(f"Baixando: {current}/{total} - {name}")
+
+    result = drone.download_params(timeout=60.0, progress_callback=progress_callback)
+
+    if result == ParamResult.SUCCESS:
+        print(f"{drone.parameters.param_count()} parâmetros baixados!")
+    else:
+        print(f"Falha: {result}")
+
+Ler Parâmetro Específico:
+
+    # Com cache (recomendado após download_all)
+    result, param = drone.get_param("MIS_TAKEOFF_ALT", timeout=3.0)
+
+    if result == ParamResult.SUCCESS:
+        print(f"MIS_TAKEOFF_ALT = {param.value}")
+        print(f"  Tipo: {param.param_type}")
+        print(f"  Índice: {param.param_index}")
+    else:
+        print(f"Erro: {result}")
+
+    # Apenas o valor (com default)
+    valor = drone.get_param_value("MIS_TAKEOFF_ALT", default=10.0)
+    print(f"Valor: {valor}")
+
+    # Verificar se parâmetro está no cache
+    if drone.parameters.has_param("SYSID_THISMAV"):
+        print("Parâmetro em cache")
+
+Escrever Parâmetro:
+
+    result = drone.set_param("MIS_TAKEOFF_ALT", 20.0, timeout=3.0)
+
+    if result == ParamResult.SUCCESS:
+        print("Parâmetro alterado com sucesso!")
+    elif result == ParamResult.TIMEOUT:
+        print("Timeout - drone não respondeu")
+    elif result == ParamResult.NOT_FOUND:
+        print("Parâmetro não encontrado")
+    elif result == ParamResult.INVALID_VALUE:
+        print("Valor inválido para este parâmetro")
+    elif result == ParamResult.WRITE_FAILED:
+        print("Falha na escrita")
+
+Buscar Parâmetros:
+
+    # Buscar por padrão (case-insensitive)
+    params_bateria = drone.find_params("BATT_")
+    for nome, param in params_bateria.items():
+        print(f"{nome} = {param.value}")
+
+    # Buscar todos relacionados a failsafe
+    params_fs = drone.find_params("FS_")
+    for nome, param in params_fs.items():
+        print(f"{nome} = {param.value}")
+
+    # Listar parâmetros (opcionalmente filtrados)
+    lista = drone.parameters.list_params(filter_pattern="ARM")
+    for name, value, ptype in lista:
+        print(f"{name}: {value} ({ptype})")
+
+Parâmetros Comuns para Ajustar:
+
+    # Altitude de decolagem
+    drone.set_param("MIS_TAKEOFF_ALT", 15.0)
+
+    # Raio de aceitação de waypoint
+    drone.set_param("WPNAV_RADIUS", 2.0)
+
+    # Velocidade máxima
+    drone.set_param("WPNAV_SPEED", 500.0)  # cm/s = 5 m/s
+
+    # Failsafe GCS (perda de telemetria)
+    drone.set_param("FS_GCS_ENABLE", 1)     # 0=desabilitado, 1=habilitado
+
+    # Bateria failsafe
+    drone.set_param("BATT_FS_LOW_ACT", 1)   # 0=nada, 1=RTL, 2=LAND
+
+    # Arming check
+    drone.set_param("ARMING_CHECK", 1)      # 0=desabilitar verificações
+
+    # ID do sistema
+    drone.set_param("SYSID_THISMAV", 1)
+
+Exportar/Importar Parâmetros:
+
+    # Salvar todos os parâmetros em arquivo
+    drone.save_params("parametros_backup.txt")
+
+    # Carregar parâmetros de arquivo (apenas cache)
+    drone.load_params("parametros_padrao.txt")
+
+    # Limpar cache (força novo download)
+    drone.parameters.clear_cache()
+
+Informações Detalhadas:
+
+    # Obter informações detalhadas de um parâmetro
+    info = drone.parameters.get_param_info("MIS_TAKEOFF_ALT")
+    if info:
+        print(f"Nome: {info['name']}")
+        print(f"Valor: {info['value']}")
+        print(f"Tipo: {info['type_name']}")
+        print(f"Índice: {info['index']}")
+
+    # Comparar parâmetros com outro conjunto
+    differences = drone.parameters.compare_params({'SYSID_THISMAV': 2})
+    for name, (current, other) in differences.items():
+        print(f"{name}: {current} -> {other}")
+
+    # Restaurar múltiplos parâmetros
+    params_to_restore = {
+        'SYSID_THISMAV': 1,
+        'ARMING_CHECK': 1
+    }
+    results = drone.parameters.restore_params(params_to_restore)
+
+
+================================================================================
+                           FAILSAFE E SEGURANÇA
+================================================================================
+
+Configurar Failsafe:
+
+    from failsafe import FailsafeState
+
+    drone.configure_failsafe(
+        # Timeouts
+        heartbeat_timeout=3.0,           # Timeout de heartbeat (segundos)
+        
+        # Reconexão
+        max_reconnect_attempts=5,        # Máximo de tentativas de reconexão
+        reconnect_interval=2.0,          # Intervalo entre tentativas
+        reconnect_backoff=True,          # Backoff exponencial
+        max_reconnect_interval=30.0,     # Intervalo máximo entre tentativas
+        
+        # Packet loss
+        packet_loss_warning=0.3,         # 30% perda = warning
+        packet_loss_critical=0.5,        # 50% perda = crítico
+        
+        # Ações automáticas
+        auto_land_on_failsafe=True,      # Pousar automaticamente
+        auto_rtl_on_failsafe=False,      # Ou RTL automático
+        failsafe_action_delay=5.0,       # Aguardar 5s antes de agir
+        
+        # Recuperação
+        auto_reconnect=True,             # Reconectar automaticamente
+        auto_arm_after_reconnect=False,  # NUNCA rearmar automaticamente!
+        
+        # Estabilização
+        stabilization_time=5.0           # Tempo de estabilização pós-conexão
+    )
+
+Callbacks de Eventos:
+
+    def on_failsafe_activated(state):
+        print(f"🔴 FAILSAFE ATIVADO! Estado: {state}")
+        # Ações de emergência:
+        # - Enviar alerta (email, SMS, telegram)
+        # - Registrar em log
+        # - Acionar sirene/buzzer
+        # - Notificar operador
+
+    def on_failsafe_recovered():
+        print("🟢 Link recuperado! Voltando à operação normal")
+
+    def on_state_changed(old_state, new_state):
+        print(f"📊 Estado: {old_state.name} -> {new_state.name}")
+
+    def on_packet_loss(loss_rate):
+        if loss_rate > 0.5:
+            print(f"⚠️ Perda crítica de pacotes: {loss_rate:.1%}")
+
+    def on_disconnected():
+        print("🔌 Desconectado do veículo!")
+
+    def on_reconnected():
+        print("🔗 Reconectado com sucesso!")
+
+    # Registrar callbacks
+    drone.failsafe.on_failsafe(on_failsafe_activated)
+    drone.failsafe.on_recover(on_failsafe_recovered)
+    drone.failsafe.on_state_change(on_state_changed)
+    drone.failsafe.on_packet_loss(on_packet_loss)
+    drone.failsafe.on_disconnect(on_disconnected)
+    drone.failsafe.on_reconnect(on_reconnected)
+
+Monitorar Estado do Link:
+
+    # Estatísticas completas
+    stats = drone.get_link_stats()
+    print(f"Estado: {stats['state']}")
+    print(f"Packet Loss: {stats['packet_loss_rate']}")
+    print(f"Reconexões: {stats['reconnect_attempts']}")
+    print(f"Heartbeat age: {stats['heartbeat_age']}s")
+    print(f"Total de pacotes: {stats['total_packets']}")
+
+    # Imprimir estatísticas formatadas
+    drone.print_link_stats()
+
+    # Verificar se failsafe está ativo
+    if drone.is_failsafe_active:
+        print("⚠️ FAILSAFE ATIVO! Não envie comandos!")
+
+    # Estado atual
+    state = drone.get_failsafe_state()
+    print(f"Estado: {state.name}")  # NORMAL, WARNING, CRITICAL, FAILSAFE, etc.
+
+    # Verificar se está em recuperação
+    if drone.failsafe.is_recovering:
+        print("🔄 Sistema em recuperação...")
+
+Reconexão Manual:
+
+    if not drone.is_connected:
+        print("Tentando reconectar...")
+        if drone.reconnect():
+            print("✅ Reconectado!")
+        else:
+            print("❌ Falha na reconexão")
+
+Resetar Estatísticas:
+
+    # Resetar todas as estatísticas do link
+    drone.reset_link_stats()
+
+    # Resetar estatísticas do dispatcher
+    drone.dispatcher.reset_stats()
+
+Estatísticas do Dispatcher:
+
+    # Obter estatísticas de eventos
+    stats = drone.dispatcher.get_stats()
+    print(f"Total de eventos: {stats['total_events']}")
+    print(f"Handlers ativos: {stats['total_handlers']}")
+    print(f"Eventos por tipo: {stats['events_by_type']}")
+
+    # Imprimir estatísticas
+    drone.dispatcher.print_stats()
+
+
+================================================================================
+                              HEALTH MONITOR
+================================================================================
+
+O Health Monitor detecta proativamente problemas com o veículo e link de
+comunicação.
+
+Uso Básico:
+
+    # Callback para problemas detectados
+    def on_health_issues(issues):
+        print(f"\n⚠️ Problemas detectados ({len(issues)}):")
+        for issue in issues:
+            severity_icon = {
+                "OK": "✅",
+                "INFO": "ℹ️",
+                "WARNING": "⚠️",
+                "ERROR": "❌",
+                "CRITICAL": "🔴"
+            }.get(issue.severity.name, "❓")
+            
+            print(f"  {severity_icon} [{issue.severity.name}] {issue.name}: {issue.message}")
+
+    # Registrar callback
+    drone.on_health_issues(on_health_issues)
+
+    # Verificar problemas atuais
+    issues = drone.get_health_issues()
+    if issues:
+        print("Problemas atuais:")
+        for issue in issues:
+            print(f"  - {issue.message}")
+    else:
+        print("✅ Veículo saudável!")
+
+    # Ver histórico de problemas
+    history = drone.get_health_history()
+    print(f"Histórico: {len(history)} problemas registrados")
+
+    # Estatísticas
+    stats = drone.get_health_stats()
+    print(f"Verificações: {stats['checks_performed']}")
+    print(f"Problemas detectados: {stats['issues_detected']}")
+    print(f"Watchdog disparado: {stats['watchdog_fired']}")
+
+Monitoramento Contínuo:
+
+    import time
+
+    # Loop de monitoramento
+    while drone.is_connected:
+        issues = drone.get_health_issues()
+        
+        if issues:
+            print(f"\r⚠️ {len(issues)} problema(s) ativo(s)", end="")
+        else:
+            print(f"\r✅ Saudável | Alt: {drone.state.position.relative_altitude:.1f}m", end="")
+        
+        time.sleep(1)
+
+Kick Watchdog:
+
+    # O watchdog é automaticamente atualizado pelo heartbeat
+    # Mas você pode forçar manualmente se necessário:
+    drone.kick_watchdog()
+
+
+================================================================================
+                              RATE LIMITING
+================================================================================
+
+O Rate Limiter previne saturação do link de comunicação limitando a frequência
+de mensagens.
+
+Configuração:
+
+    from rate_limiter import LimitStrategy
+
+    # Configurar intervalo mínimo entre mensagens (segundos)
+    drone.configure_rate_limit("GOTO", interval=1.0)        # Máx 1 GOTO por segundo
+    drone.configure_rate_limit("VELOCITY", interval=0.2)    # Máx 5 comandos/s
+    drone.configure_rate_limit("PARAM_SET", interval=0.5)   # Máx 2 parâmetros/s
+
+    # Configurar estratégia para quando exceder o limite
+    drone.configure_rate_limit_strategy("GOTO", LimitStrategy.BLOCK)   # Bloqueia até poder
+    drone.configure_rate_limit_strategy("HEARTBEAT", LimitStrategy.DROP) # Descarta excedentes
+    drone.configure_rate_limit_strategy("PARAM_SET", LimitStrategy.QUEUE) # Enfileira
+
+Estratégias:
+
+    | Estratégia | Comportamento                                   |
+    |------------|-------------------------------------------------|
+    | DROP       | Descarta mensagens que excedem o limite         |
+    | QUEUE      | Enfileira mensagens para enviar depois          |
+    | BLOCK      | Bloqueia até poder enviar (padrão)              |
+
+Estatísticas:
+
+    stats = drone.get_rate_limiter_stats()
+    print(f"Intervals: {stats['intervals']}")
+    print(f"Queue sizes: {stats['queue_sizes']}")
+    print(f"Strategies: {stats['strategies']}")
+
+
+================================================================================
+                            VALIDAÇÃO DE ENTRADA
+================================================================================
+
+A biblioteca inclui validadores para prevenir comandos inválidos.
+
+Validar Coordenadas:
+
+    # Validar latitude/longitude
+    result = drone.validate_coordinates(-35.363261, 149.165230)
+    if result.valid:
+        print("✅ Coordenadas válidas")
+    else:
+        print(f"❌ {result.message}")
+        print(f"   Severidade: {result.severity.name}")
+
+Validar Altitude:
+
+    # Validar altitude para decolagem
+    result = drone.validate_altitude(10.0, operation='takeoff')
+    print(f"Altitude: {result.message}")
+
+    # Validar altitude genérica
+    result = drone.validate_altitude(100.0)
+
+Validar Velocidade:
+
+    # Validar velocidade de solo
+    result = drone.validate_ground_speed(15.0)
+    if result.severity.name == "WARNING":
+        print(f"⚠️ {result.message}")
+
+    # Validar velocidade vertical
+    result = drone.validate_vertical_speed(5.0)
+
+    # Validar taxa de yaw
+    result = drone.validate_yaw_rate(90.0)
+
+Validar Parâmetros:
+
+    # Validar nome de parâmetro
+    result = drone.validate_param("MIS_TAKEOFF_ALT")
+    print(f"Parâmetro: {result.message}")
+
+    # Validar valor de parâmetro
+    result = drone.validate_param("ARMING_CHECK", value=1)
+    if result.valid:
+        print("Valor válido para ARMING_CHECK")
+
+Validar Missões:
+
+    from validators import MissionValidator
+
+    # Validar tamanho da missão
+    result = MissionValidator.validate_mission_size(10)
+    if not result.valid:
+        print(f"Erro: {result.message}")
+
+    # Validar sequência de waypoints
+    waypoints = [(-35.363, 149.165, 30), (-35.364, 149.166, 35)]
+    result = MissionValidator.validate_waypoint_sequence(waypoints)
+
+
+================================================================================
+                             EXEMPLOS COMPLETOS
+================================================================================
+
+Exemplo 1: Script de Teste Completo
+
+    #!/usr/bin/env python3
+    """
+    teste_completo.py - Teste completo da biblioteca ppymavlink
+    """
+
+    import time
+    import sys
+    from vehicle import Vehicle
+    from commands import CommandResult
+    from parameters import ParamResult
+    from mission import MissionResult
+    from navigation import NavResult
+
+    def main():
+        connection_string = sys.argv[1] if len(sys.argv) > 1 else "udp:127.0.0.1:14550"
+        
+        print("=" * 60)
+        print(" TESTE COMPLETO PPYMAVLINK")
+        print("=" * 60)
+        
+        with Vehicle(connection_string) as drone:
+            # 1. Aguardar telemetria
+            print("\n📡 Aguardando telemetria...")
+            if not drone.wait_ready(timeout=15):
+                print("❌ Timeout aguardando telemetria")
+                return
+            
+            # 2. Exibir estado inicial
+            drone.print_status()
+            
+            # 3. Configurar failsafe
+            print("\n🛡️ Configurando failsafe...")
+            drone.configure_failsafe(
+                heartbeat_timeout=5.0,
+                auto_land_on_failsafe=True,
+                auto_reconnect=True
+            )
+            
+            # 4. Testar parâmetros
+            print("\n📥 Baixando parâmetros...")
+            result = drone.download_params(timeout=30.0)
+            print(f"Download: {result}")
+            
+            # 5. Testar comandos
+            print("\n🎮 Testando comandos...")
+            drone.set_mode("GUIDED")
+            
+            result = drone.arm()
+            print(f"ARM: {result}")
+            
+            if result == CommandResult.SUCCESS:
+                # 6. Decolar
+                print("\n🛫 Decolando 5 metros...")
+                result = drone.takeoff_guided(5.0, timeout=20.0)
+                
+                if result == NavResult.SUCCESS:
+                    time.sleep(2)
+                    print(f"Altitude: {drone.state.position.relative_altitude:.1f}m")
+                    
+                    # 7. Testar navegação
+                    print("\n🧭 Testando navegação...")
+                    result = drone.goto_relative(10.0, 0.0, 0.0, timeout=20.0)
+                    print(f"GOTO: {result}")
+                    
+                    # 8. Testar yaw
+                    print("\n🔄 Testando yaw...")
+                    drone.set_yaw(90, is_relative=True)
+                    time.sleep(2)
+                    
+                    # 9. Retornar
+                    print("\n🏠 Retornando para casa...")
+                    drone.set_mode("RTL")
+                    
+                    # Aguardar pouso
+                    while drone.state.is_armed():
+                        alt = drone.state.position.relative_altitude or 0
+                        print(f"\rAltitude: {alt:.1f}m", end="")
+                        time.sleep(1)
+                    print()
+                
+                # 10. Desarmar
+                print("\n🔒 Desarmando...")
+                drone.disarm()
+            
+            # 11. Estatísticas finais
+            print("\n📊 Estatísticas do link:")
+            drone.print_link_stats()
+            
+            print("\n✅ Teste concluído!")
+
+    if __name__ == "__main__":
+        main()
+
+Exemplo 2: Decolagem e Pouso Seguro
+
+    from vehicle import Vehicle
+    from commands import CommandResult
+    import time
+
+    def safe_operation(drone):
+        """Executa sequência segura de voo"""
+        
+        # Verificação pré-voo
+        print("=== VERIFICAÇÃO PRÉ-VOO ===")
+        checks = [
+            ("Conectado", drone.is_connected),
+            ("GPS Fix", drone.state.has_gps_fix()),
+            ("Bateria > 10.5V", drone.state.battery.voltage and drone.state.battery.voltage > 10.5),
+            ("Modo válido", drone.state.flight_mode() != "UNKNOWN"),
+        ]
+        
+        all_ok = True
+        for name, ok in checks:
+            status = "✅" if ok else "❌"
+            print(f"{status} {name}")
+            if not ok:
+                all_ok = False
+        
+        if not all_ok:
+            print("❌ Verificações falharam. Abortando.")
+            return False
+        
+        # Preparar para voo
+        print("\n🎮 Preparando para voo...")
+        drone.set_mode("GUIDED")
+        
+        # Armar
+        print("Armando motores...")
+        result = drone.arm()
+        if result != CommandResult.SUCCESS:
+            print(f"❌ Falha ao armar: {result}")
+            return False
+        
+        # Decolar
+        print("🛫 Decolando para 10 metros...")
+        result = drone.takeoff_guided(10.0, timeout=15.0)
+        if result != NavResult.SUCCESS:
+            print(f"❌ Falha na decolagem: {result}")
+            drone.disarm()
+            return False
+        
+        # Pairar por 5 segundos
+        print("⏱️ Pairando...")
+        time.sleep(5)
+        
+        # Pousar
+        print("🛬 Pousando...")
+        drone.land()
+        
+        # Aguardar pouso
+        while drone.state.is_armed():
+            alt = drone.state.position.relative_altitude or 0
+            print(f"\rAltitude: {alt:.1f}m", end="")
+            time.sleep(1)
+        print()
+        
+        print("✅ Operação concluída com sucesso!")
+        return True
+
+    # Executar
+    with Vehicle("udp:127.0.0.1:14550") as drone:
+        drone.wait_ready()
+        safe_operation(drone)
+
+Exemplo 3: Missão com Waypoints em Quadrado
+
+    from vehicle import Vehicle
+    import time
+
+    with Vehicle("udp:127.0.0.1:14550") as drone:
+        drone.wait_ready()
+        
+        # Configurar failsafe
+        drone.configure_failsafe(
+            heartbeat_timeout=5.0,
+            auto_land_on_failsafe=True
+        )
+        
+        # Criar missão (quadrado)
+        print("📝 Criando missão...")
+        drone.clear_local_mission()
+        
+        # Ponto de partida (posição atual)
+        pos = drone.state.position
+        lat = pos.latitude
+        lon = pos.longitude
+        
+        # Deslocamentos (aproximadamente 50m)
+        offset = 0.00045  # ~50m
+        
+        drone.add_takeoff(10)
+        drone.add_waypoint(lat, lon, 20)
+        drone.add_waypoint(lat + offset, lon, 20)
+        drone.add_waypoint(lat + offset, lon + offset, 20)
+        drone.add_waypoint(lat, lon + offset, 20)
+        drone.add_waypoint(lat, lon, 20)
+        drone.add_loiter(5)
+        drone.add_rtl()
+        
+        # Mostrar missão
+        print(f"Missão com {drone.mission_count()} itens:")
+        for item in drone.get_mission():
+            print(f"  Item {item.seq}: {item}")
+        
+        # Enviar e executar
+        print("\n📤 Enviando missão...")
+        result = drone.upload_mission()
+        if result != MissionResult.SUCCESS:
+            print(f"❌ Falha no upload: {result}")
+            exit()
+        
+        print("🚀 Iniciando missão...")
+        drone.set_mode("AUTO")
+        
+        result = drone.arm()
+        if result != CommandResult.SUCCESS:
+            print(f"❌ Falha ao armar: {result}")
+            exit()
+        
+        # Monitorar
+        print("\n📊 Monitorando missão...")
+        while drone.state.is_armed():
+            pos = drone.state.position
+            print(f"\rAlt: {pos.relative_altitude:.1f}m | "
+                  f"Modo: {drone.state.flight_mode()} | "
+                  f"Bat: {drone.state.battery.voltage:.1f}V", end="")
+            
+            if drone.is_failsafe_active:
+                print("\n⚠️ Failsafe ativo!")
+                break
+            
+            time.sleep(1)
+        
+        print("\n✅ Missão concluída!")
+        drone.print_status()
+
+Exemplo 4: Controle por Velocidade (Body Frame)
+
+    from vehicle import Vehicle
+    import time
+
+    def fly_pattern(drone):
+        """Executa padrão de voo usando body frame"""
+        
+        # Quadrado
+        print("⬆️ Frente 3 segundos...")
+        drone.set_velocity_body(vx=3.0, vy=0, vz=0, duration=3)
+        time.sleep(4)
+        
+        print("➡️ Direita 3 segundos...")
+        drone.set_velocity_body(vx=0, vy=3.0, vz=0, duration=3)
+        time.sleep(4)
+        
+        print("⬇️ Trás 3 segundos...")
+        drone.set_velocity_body(vx=-3.0, vy=0, vz=0, duration=3)
+        time.sleep(4)
+        
+        print("⬅️ Esquerda 3 segundos...")
+        drone.set_velocity_body(vx=0, vy=-3.0, vz=0, duration=3)
+        time.sleep(4)
+        
+        # Espiral (subindo)
+        print("\n🌀 Espiral ascendente...")
+        start = time.time()
+        while time.time() - start < 10:
+            drone.set_velocity_body(vx=2.0, vy=2.0, vz=-0.5)
+            time.sleep(0.5)
+        
+        # Parar
+        print("🛑 Parando...")
+        drone.stop_navigation()
+
+    with Vehicle("udp:127.0.0.1:14550") as drone:
+        drone.wait_ready()
+        
+        drone.set_mode("GUIDED")
+        drone.arm()
+        drone.takeoff_guided(5)
+        
+        fly_pattern(drone)
+        
+        # Pousar
+        drone.set_mode("LAND")
+        while drone.state.is_armed():
+            time.sleep(1)
+        
+        print("✅ Padrão concluído!")
+
+Exemplo 5: Monitoramento com Health e Failsafe
+
+    from vehicle import Vehicle
+    import time
+
+    def monitor_health(drone):
+        """Monitora saúde do veículo em tempo real"""
+        
+        def on_health(issues):
+            if issues:
+                print(f"\n⚠️ {len(issues)} problema(s):")
+                for issue in issues:
+                    print(f"  - {issue.message}")
+        
+        drone.on_health_issues(on_health)
+        
+        while drone.is_connected:
+            stats = drone.get_link_stats()
+            issues = drone.get_health_issues()
+            
+            # Status line
+            status = (f"\r📡 Link: {stats['state']:<12} | "
+                     f"Perda: {stats['packet_loss_rate']:<6} | "
+                     f"GPS: {drone.state.gps.fix_type} | "
+                     f"Problemas: {len(issues)}")
+            
+            if drone.is_failsafe_active:
+                status += " | 🔴 FAILSAFE"
+            elif issues:
+                status += " | ⚠️ ATENÇÃO"
+            else:
+                status += " | ✅ OK"
+            
+            print(status, end="", flush=True)
+            time.sleep(1)
+
+    with Vehicle("udp:127.0.0.1:14550") as drone:
+        drone.wait_ready()
+        monitor_health(drone)
+
+
+================================================================================
+                             REFERÊNCIA RÁPIDA
+================================================================================
+
+Conexão:
+
+    | Método                                | Descrição                    |
+    |---------------------------------------|------------------------------|
+    | drone = Vehicle(conn_str, baudrate)   | Criar instância              |
+    | drone.connect()                       | Conectar                     |
+    | drone.wait_ready(timeout)             | Aguardar telemetria          |
+    | drone.disconnect()                    | Desconectar                  |
+    | drone.is_connected                    | Verificar conexão            |
+    | drone.target_system                   | ID do sistema alvo           |
+
+Estado:
+
+    | Método/Propriedade                    | Descrição                    |
+    |---------------------------------------|------------------------------|
+    | drone.state.flight_mode()             | Modo de voo                  |
+    | drone.state.is_armed()                | Está armado?                 |
+    | drone.state.has_gps_fix()             | GPS fix 3D?                  |
+    | drone.state.position                  | Posição (lat, lon, alt)      |
+    | drone.state.attitude                  | Atitude (roll, pitch, yaw)   |
+    | drone.state.battery                   | Bateria (V, A, %)            |
+    | drone.state.gps                       | GPS (fix_type, satellites)   |
+    | drone.print_status()                  | Imprimir status              |
+    | drone.get_status_dict()               | Status como dict             |
+
+Comandos:
+
+    | Método                                | Descrição                    |
+    |---------------------------------------|------------------------------|
+    | drone.arm(timeout)                    | Armar motores                |
+    | drone.disarm(timeout)                 | Desarmar                     |
+    | drone.commands.force_disarm()         | Forçar desarme               |
+    | drone.takeoff(alt, timeout)           | Decolar                      |
+    | drone.land(timeout)                   | Pousar                       |
+    | drone.set_mode(mode, timeout)         | Mudar modo                   |
+    | drone.commands.rtl()                  | Return to Launch             |
+    | drone.commands.hold()                 | Loiter/HOLD                  |
+    | drone.reboot(autopilot_only)          | Reiniciar                    |
+
+Navegação:
+
+    | Método                                | Descrição                    |
+    |---------------------------------------|------------------------------|
+    | drone.goto(lat, lon, alt, ...)        | Ir para coordenada           |
+    | drone.goto_relative(north, east, up)  | Mover relativo               |
+    | drone.takeoff_guided(alt, timeout)    | Decolagem guiada             |
+    | drone.land_guided(timeout)            | Pouso guiado                 |
+    | drone.set_velocity(vx, vy, vz, ...)   | Velocidade (global)          |
+    | drone.set_velocity_body(vx, vy, vz)   | Velocidade (body)            |
+    | drone.set_yaw(yaw, relative)          | Orientação                   |
+    | drone.set_yaw_rate(rate, duration)    | Rotação                      |
+    | drone.set_altitude(alt, speed)        | Mudar altitude               |
+    | drone.stop_navigation()               | Parar navegação              |
+    | drone.loiter()                        | Pairar                       |
+
+Missões:
+
+    | Método                                | Descrição                    |
+    |---------------------------------------|------------------------------|
+    | drone.clear_local_mission()           | Limpar missão local          |
+    | drone.add_takeoff(alt)                | Adicionar decolagem          |
+    | drone.add_waypoint(lat, lon, alt)     | Adicionar waypoint           |
+    | drone.add_land()                      | Adicionar pouso              |
+    | drone.add_rtl()                       | Adicionar RTL                |
+    | drone.add_loiter(seconds, radius)     | Adicionar loiter             |
+    | drone.upload_mission(items, timeout)  | Enviar missão                |
+    | drone.download_mission(timeout)       | Baixar missão                |
+    | drone.clear_mission(timeout)          | Limpar missão                |
+    | drone.upload_waypoints(list, ...)     | Upload rápido                |
+    | drone.get_mission()                   | Listar itens                 |
+    | drone.mission_count()                 | Número de itens              |
+    | drone.export_mission(filepath)        | Exportar missão              |
+
+Parâmetros:
+
+    | Método                                | Descrição                    |
+    |---------------------------------------|------------------------------|
+    | drone.download_params(timeout, cb)    | Baixar todos                 |
+    | drone.get_param(name, timeout)        | Ler parâmetro                |
+    | drone.get_param_value(name, default)  | Ler valor                    |
+    | drone.set_param(name, value, timeout) | Escrever parâmetro           |
+    | drone.find_params(pattern)            | Buscar parâmetros            |
+    | drone.get_all_params()                | Todos em cache               |
+    | drone.save_params(filepath)           | Exportar                     |
+    | drone.load_params(filepath)           | Importar                     |
+
+Failsafe:
+
+    | Método                                | Descrição                    |
+    |---------------------------------------|------------------------------|
+    | drone.configure_failsafe(**kwargs)    | Configurar                   |
+    | drone.get_link_stats()                | Estatísticas do link         |
+    | drone.print_link_stats()              | Imprimir stats               |
+    | drone.get_failsafe_state()            | Estado atual                 |
+    | drone.is_failsafe_active              | Failsafe ativo?              |
+    | drone.reconnect()                     | Reconectar manual            |
+    | drone.reset_link_stats()              | Resetar stats                |
+
+Health Monitor:
+
+    | Método                                | Descrição                    |
+    |---------------------------------------|------------------------------|
+    | drone.on_health_issues(callback)      | Callback para problemas      |
+    | drone.get_health_issues()             | Problemas atuais             |
+    | drone.get_health_history()            | Histórico                    |
+    | drone.get_health_stats()              | Estatísticas                 |
+    | drone.kick_watchdog()                 | Atualizar watchdog           |
+
+Rate Limiting:
+
+    | Método                                | Descrição                    |
+    |---------------------------------------|------------------------------|
+    | drone.configure_rate_limit(type, int) | Configurar intervalo         |
+    | drone.configure_rate_limit_strategy() | Configurar estratégia        |
+    | drone.get_rate_limiter_stats()        | Estatísticas                 |
+
+Validação:
+
+    | Método                                | Descrição                    |
+    |---------------------------------------|------------------------------|
+    | drone.validate_coordinates(lat, lon)  | Validar coordenadas          |
+    | drone.validate_altitude(alt, op)      | Validar altitude             |
+    | drone.validate_ground_speed(speed)    | Validar velocidade solo      |
+    | drone.validate_vertical_speed(speed)  | Validar velocidade vertical  |
+    | drone.validate_yaw_rate(rate)         | Validar taxa de yaw          |
+    | drone.validate_param(name, value)     | Validar parâmetro            |
+
+
+================================================================================
+                                ENUMS DE RESULTADO
+================================================================================
+
+CommandResult:
+    SUCCESS        # Comando aceito
+    TIMEOUT        # Sem resposta
+    DENIED         # Negado (pré-arm checks falharam)
+    FAILED         # Falha geral
+    DISCONNECTED   # Desconectado
+
+NavResult:
+    SUCCESS            # Chegou ao destino
+    TIMEOUT            # Não chegou a tempo
+    FAILED             # Falha geral
+    REJECTED           # Modo errado
+    DISCONNECTED       # Desconectado
+    INVALID_TARGET     # Alvo inválido
+    NOT_ARMED          # Não está armado
+
+MissionResult:
+    SUCCESS            # Operação OK
+    TIMEOUT            # Timeout
+    ERROR              # Erro geral
+    INVALID_SEQUENCE   # Sequência inválida
+    NO_MISSION         # Sem missão
+    CANCELLED          # Cancelado
+    DISCONNECTED       # Desconectado
+
+ParamResult:
+    SUCCESS            # Leitura/Escrita OK
+    TIMEOUT            # Timeout
+    NOT_FOUND          # Não encontrado
+    INVALID_VALUE      # Valor inválido
+    WRITE_FAILED       # Falha na escrita
+    DISCONNECTED       # Desconectado
+
+FailsafeState:
+    NORMAL             # Operação normal
+    WARNING            # Sinais de degradação
+    CRITICAL           # Crítico
+    FAILSAFE           # Failsafe ativo
+    RECOVERING         # Recuperando
+    DISCONNECTED       # Desconectado
+
+HealthSeverity:
+    OK                 # Saudável
+    INFO               # Informativo
+    WARNING            # Aviso
+    ERROR              # Erro
+    CRITICAL           # Crítico
+
+LimitStrategy:
+    DROP               # Descarta excedentes
+    QUEUE              # Enfileira
+    BLOCK              # Bloqueia (padrão)
+
+
+================================================================================
+                                MODOS DE VOO
+================================================================================
+
+    "GUIDED"      # Navegação guiada por GPS
+    "AUTO"        # Missão automática
+    "RTL"         # Return to Launch
+    "LAND"        # Pouso
+    "LOITER"      # Pairar no local
+    "STABILIZE"   # Estabilizado (sem GPS)
+    "ALT_HOLD"    # Manter altitude
+    "POSHOLD"     # Manter posição (GPS)
+    "ACRO"        # Acrobático
+    "SPORT"       # Esportivo
+    "BRAKE"       # Frenagem
+    "FLIP"        # Flip
+    "AUTOTUNE"    # Auto-tune
+
+
+================================================================================
+                                DICAS IMPORTANTES
+================================================================================
+
+1. SEMPRE aguarde telemetria após conectar: drone.wait_ready(timeout=10)
+
+2. SEMPRE verifique GPS fix antes de armar em modo GUIDED
+
+3. SEMPRE monitore a bateria durante o voo
+
+4. SEMPRE configure o failsafe adequadamente antes de voar
+
+5. TESTE PRIMEIRO no SITL (simulador) antes de voar com hardware real
+
+6. USE CONTEXT MANAGER (with Vehicle(...) as drone:) para garantir desconexão
+
+7. TRATE EXCEÇÕES e use KeyboardInterrupt para interrupção segura
+
+8. MONITORE o estado do link e o health monitor continuamente
+
+9. VALIDE entradas antes de enviar comandos críticos
+
+10. DOCUMENTE suas missões e parâmetros para reprodução
+
+
+================================================================================
+                                FIM DO GUIA
+================================================================================
+
+Para suporte adicional, consulte os arquivos fonte da biblioteca e a
+documentação do MAVLink.
